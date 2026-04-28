@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ta-automl"
-version = "0.1.2"
+version = "0.2.0"
 description = "AutoML hyperparameter optimization for TA-Lib trading signals with backtesting"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,7 +17,7 @@ dependencies = [
     "ta-lib>=0.4.0",
     # Optimization
     "google-vizier>=0.1.11",
-    "flaml[automl, blendsearch]>=2.1",
+    "flaml[automl,blendsearch]>=2.1",
     "jax[cpu]",
     "shap>=0.44",
     # Backtesting
@@ -29,7 +29,13 @@ dependencies = [
     "matplotlib>=3.7",
     "diskcache>=5.6",
     "pyarrow>=12.0",
+    # GUI (v0.2.0)
+    "dash>=2.17",
+    "plotly>=5.20",
+    "dash-bootstrap-components>=1.6",
 ]
+
+[project.optional-dependencies]
 # Add CatBoost as an *optional* candidate model FLAML can choose. Not required.
 catboost = [
     "catboost>=1.2",
@@ -37,6 +43,7 @@ catboost = [
 
 [project.scripts]
 ta-automl = "ta_automl.main:cli"
+ta-automl-gui = "ta_automl.gui.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ta_automl"]

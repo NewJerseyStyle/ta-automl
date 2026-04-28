@@ -2,6 +2,11 @@
 
 AutoML hyperparameter optimizer for TA-Lib technical analysis signals with backtesting.
 
+> **v0.2.0 — GUI:** prefer clicking to typing? Run `ta-automl-gui` after installing
+> and a Plotly Dash interface opens at <http://127.0.0.1:8050>. Every option has a
+> **(?)** button that explains the concept with a plain-English analogy — no ML or
+> finance background required. See `ta_automl/gui/`.
+
 ## How it works
 
 **Stage 1 — Screening:** Loops over all ~158 TA-Lib indicators via `talib.get_functions()`, computes each (default mode: TA-Lib defaults; with `--tune-screen`: a small per-indicator Vizier/FLAML/random search picks better params and binarization method), binarizes the output to `{-1, 0, +1}`, and keeps those with sufficient signal density. Typically yields 100–150 indicator outputs as candidates. The tuned configs are then handed to Stage 2 as warm-start anchors so Vizier doesn't re-discover them.
