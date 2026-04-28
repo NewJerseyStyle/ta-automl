@@ -13,36 +13,12 @@ AutoML hyperparameter optimizer for TA-Lib technical analysis signals with backt
 ## Setup
 
 ### Requirements
-- Python 3.11 (managed by `uv`)
-- `uv` installed
+- Python 3.11
 
 ### Install
 
 ```bash
-cd ta-automl
-
-# Create venv and install all dependencies
-uv venv .venv --python 3.11
-uv pip install -e .
-```
-
-### Optimizer backend: Vizier vs FLAML
-
-The project supports two optimizers:
-
-| Backend | Requires | Notes |
-|---------|----------|-------|
-| `vizier` (default) | `jax[cpu]` (not bundled) | GP-Bandit, best for exploration |
-| `flaml` | Nothing extra | BlendSearch, works out of the box |
-
-**If Vizier fails with `ModuleNotFoundError: No module named 'jax'`**, either:
-
-```bash
-# Option A: install JAX (Windows-supported as of JAX 0.4.x)
-uv pip install "jax[cpu]"
-
-# Option B: use FLAML instead (no extra install needed)
-ta-automl --optimizer flaml
+pip install ta-automl
 ```
 
 ---
@@ -50,10 +26,6 @@ ta-automl --optimizer flaml
 ## Usage
 
 ```bash
-# Activate environment
-.venv/Scripts/activate      # Windows
-# source .venv/bin/activate  # Linux/Mac
-
 # Default: AMD, 2018–2024, 100 Vizier trials
 ta-automl --symbol AMD
 
@@ -111,7 +83,7 @@ ta-automl --help
 
 ---
 
-## Customizing the search
+## For Developer: Customizing the search
 
 Two extension points, both registry-based and CLI-discoverable:
 
@@ -140,12 +112,6 @@ ta-automl --symbol AMD --search-strategy shap                    # AutoML + SHAP
 
 # Mix and match — user-supplied loss/search via 'module:fn'
 ta-automl --symbol AMD --search-strategy my_search:my_fn --loss my_losses:my_loss
-
-# SHAP search just needs SHAP — FLAML already ships LightGBM:
-uv pip install -e '.[shap]'
-
-# CatBoost is an *optional* extra candidate FLAML can pick:
-uv pip install -e '.[shap,catboost]'
 ```
 
 **When to use which strategy**:
@@ -195,7 +161,6 @@ ta_automl/
 
 | Issue | Fix |
 |-------|-----|
-| `No module named 'jax'` (Vizier) | `uv pip install "jax[cpu]"` or use `--optimizer flaml` |
+| `No module named 'jax'` (Vizier) | `pip install "jax[cpu]"` or use `--optimizer flaml` |
 | `np.bool8` error (bokeh + numpy 2.x) | Already fixed: `numpy<2.0` pinned in pyproject.toml |
-| TA-Lib C library not found | `ta-lib` 0.6.x ships pre-built wheels; re-run `uv pip install -e .` |
-| Very few screener survivors | Normal — Vizier uses weights to select; use `--min-sharpe -99` to pass all |
+| Very few screener survivors | Normal — Vizier uses weights to select; adjust threshold for example to `-99` by `--min-sharpe -99` to pass all (well... that's a bit too much) |
