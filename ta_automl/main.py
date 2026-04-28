@@ -55,16 +55,23 @@ warnings.filterwarnings("ignore", category=UserWarning)
 @click.option("--save-html",   is_flag=True, default=False, help="Save backtesting HTML chart")
 @click.option("--output-dir",  default="results",    show_default=True, help="Output directory")
 @click.option("--cache-dir",   default=".cache",     show_default=True, help="Data cache directory")
+@click.option("--plugins",     multiple=True,
+              help="Python module(s) or .py files to import before running, "
+                   "so user-registered indicators / combiners / losses / searches "
+                   "are visible. Can be repeated.")
 def cli(
     symbol, start, end, trials, optimizer, loss, list_losses,
     search_strategy, list_searches, metric,
     p_threshold, min_sharpe, no_bonferroni,
     tune_screen, tune_trials, tune_optimizer, tune_metric, tune_method,
     top_n, lookback, cash, commission, train_ratio,
-    no_short, save_html, output_dir, cache_dir,
+    no_short, save_html, output_dir, cache_dir, plugins,
 ):
     """AutoML hyperparameter optimizer for TA-Lib technical analysis signals."""
     import ta_automl  # triggers compat patches
+    if plugins:
+        from ta_automl.sdk.plugins import load_plugins
+        load_plugins(plugins)
 
     from ta_automl.config import ScreenConfig, StudyConfig
     from ta_automl.data.fetcher import fetch_ohlcv

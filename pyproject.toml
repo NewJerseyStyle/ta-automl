@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ta-automl"
-version = "0.2.0"
+version = "0.2.1"
 description = "AutoML hyperparameter optimization for TA-Lib trading signals with backtesting"
 requires-python = ">=3.11"
 dependencies = [
@@ -44,6 +44,7 @@ catboost = [
 [project.scripts]
 ta-automl = "ta_automl.main:cli"
 ta-automl-gui = "ta_automl.gui.app:main"
+ta-automl-dev = "ta_automl.sdk.scaffold:dev_cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ta_automl"]

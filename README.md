@@ -2,10 +2,21 @@
 
 AutoML hyperparameter optimizer for TA-Lib technical analysis signals with backtesting.
 
-> **v0.2.0 — GUI:** prefer clicking to typing? Run `ta-automl-gui` after installing
-> and a Plotly Dash interface opens at <http://127.0.0.1:8050>. Every option has a
-> **(?)** button that explains the concept with a plain-English analogy — no ML or
-> finance background required. See `ta_automl/gui/`.
+> **v0.2.1 — GUI + Developer SDK.** Two new ways to use this tool:
+>
+> 1. **Plotly Dash GUI** — `ta-automl-gui` opens a browser at
+>    <http://127.0.0.1:8050>. Every option has a **(?)** button that explains
+>    the concept with a plain-English analogy. Includes a **🎓 Tutorial mode**
+>    overlay (good for live workshops).
+> 2. **Developer SDK** — write your own indicator + your own combination rule
+>    and let ta-automl **validate the idea via backtest** (no AutoML required).
+>    Scaffold with `ta-automl-dev new-indicator <name>` /
+>    `new-combiner <name>`. See [`docs/EXTENDING.md`](docs/EXTENDING.md),
+>    [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md), and the
+>    [tutorial](docs/TUTORIAL_CUSTOM_INDICATOR.md) /
+>    [workshop](docs/TUTORIAL_ALGO_TRADING_WORKSHOP.md) docs.
+
+
 <details>
   <summary>Click to view large screenshot</summary>
   <img width="100%" alt="image" src="https://github.com/user-attachments/assets/818ff255-9f21-46e2-892d-9677a26185aa" />

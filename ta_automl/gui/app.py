@@ -14,7 +14,13 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 
-from ta_automl.gui import help_text, runner
+from ta_automl.gui import developer, help_text, runner
+from ta_automl.sdk import (
+    list_combiners,
+    list_indicators,
+    validate_idea,
+)
+from ta_automl.sdk.plugins import load_plugins
 
 # ── App init ─────────────────────────────────────────────────────────────────
 app = dash.Dash(
@@ -176,9 +182,18 @@ controls_panel = html.Div(
 )
 
 
-results_panel = html.Div(id="results-panel", children=[
+main_results_panel = html.Div(id="results-panel", children=[
     dcc.Markdown(help_text.INTRO_MARKDOWN, className="p-3"),
 ])
+
+results_panel = dbc.Tabs(
+    [
+        dbc.Tab(main_results_panel, label="AutoML run", tab_id="tab-main"),
+        dbc.Tab(developer.developer_panel(), label="Developer", tab_id="tab-dev"),
+    ],
+    id="results-tabs",
+    active_tab="tab-main",
+)
 
 
 app.layout = dbc.Container(
@@ -189,6 +204,8 @@ app.layout = dbc.Container(
                 [
                     html.H2("📈 ta-automl", className="d-inline-block me-3 mb-0"),
                     dbc.Badge("v0.2.0 GUI", color="info"),
+                    dbc.Button("🎓 Tutorial mode", id="tut-open",
+                               color="link", className="ms-3"),
                     html.Div("AutoML for technical-analysis trading strategies — for everyone.",
                              className="text-muted small mt-1"),
                 ],
@@ -212,8 +229,10 @@ app.layout = dbc.Container(
             scrollable=True,
             is_open=False,
         ),
+        developer.tutorial_modal(),
         # Background state
         dcc.Store(id="run-id", data=None),
+        dcc.Store(id="tut-step", data=0),
         dcc.Interval(id="poll", interval=1500, disabled=True),
     ],
     fluid=True,
@@ -546,6 +565,118 @@ def _params_view(r):
     )
 
 
+# ── Developer tab callbacks ─────────────────────────────────────────────────
+@app.callback(
+    Output("dev-load-status", "children"),
+    Output("dev-registry-list", "children"),
+    Output("dev-ind-pick", "options"),
+    Output("dev-combiner-pick", "options"),
+    Input("dev-load-btn", "n_clicks"),
+    Input("results-tabs", "active_tab"),
+    State("dev-plugin-path", "value"),
+    prevent_initial_call=False,
+)
+def refresh_registry(_clicks, active_tab, path):
+    msg = ""
+    if ctx.triggered_id == "dev-load-btn" and path:
+        try:
+            loaded = load_plugins([path])
+            msg = dbc.Alert(f"Loaded: {', '.join(loaded)}",
+                            color="success", className="py-2 small")
+        except Exception as exc:  # noqa: BLE001
+            msg = dbc.Alert(f"Load failed: {type(exc).__name__}: {exc}",
+                            color="danger", className="py-2 small")
+    ind_opts = [{"label": f"[custom] {n}", "value": n} for n in list_indicators()]
+    # A handful of friendly TA-Lib examples beginners recognize
+    ind_opts += [{"label": f"[TA-Lib] {n}", "value": n}
+                 for n in ("RSI", "MACD__macdhist", "ADX", "ATR", "OBV",
+                           "EMA", "BBANDS__upperband", "STOCH__slowk")]
+    com_opts = [{"label": n, "value": n} for n in list_combiners()]
+    return msg, developer.render_registry_list(), ind_opts, com_opts
+
+
+@app.callback(
+    Output("dev-validate-out", "children"),
+    Input("dev-validate-btn", "n_clicks"),
+    State("dev-ind-pick", "value"),
+    State("dev-combiner-pick", "value"),
+    State("in-symbol", "value"),
+    State("in-dates", "start_date"),
+    State("in-dates", "end_date"),
+    State("in-cash", "value"),
+    State("in-commission", "value"),
+    State("in-short", "value"),
+    State("in-train", "value"),
+    prevent_initial_call=True,
+)
+def run_validate_idea(_n, indicators, combiner, symbol, start, end,
+                      cash, commission, allow_short, train_ratio):
+    if not indicators:
+        return dbc.Alert("Pick at least one indicator.", color="warning")
+    try:
+        res = validate_idea(
+            symbol=symbol,
+            start=str(start)[:10], end=str(end)[:10],
+            indicators=indicators,
+            combiner=combiner or None,
+            cash=float(cash or 10000),
+            commission=float(commission or 0.002),
+            allow_short=bool(allow_short),
+            train_ratio=float(train_ratio or 0.7),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return dbc.Alert(f"{type(exc).__name__}: {exc}", color="danger")
+    m = res.metrics
+    return html.Div(
+        [
+            dbc.Alert(res.summary(), color="info", className="py-2"),
+            dcc.Graph(figure=res.figure) if res.figure is not None else html.Div(),
+            html.Details(
+                [
+                    html.Summary("Raw metrics", className="text-muted small"),
+                    html.Pre(str(m), className="small bg-light p-2 border rounded"),
+                ],
+                className="mt-2",
+            ),
+        ]
+    )
+
+
+# ── Tutorial modal callbacks ────────────────────────────────────────────────
+@app.callback(
+    Output("tut-modal", "is_open"),
+    Output("tut-step", "data"),
+    Output("tut-title", "children"),
+    Output("tut-body", "children"),
+    Output("tut-counter", "children"),
+    Input("tut-open", "n_clicks"),
+    Input("tut-next", "n_clicks"),
+    Input("tut-prev", "n_clicks"),
+    Input("tut-close", "n_clicks"),
+    State("tut-step", "data"),
+    State("tut-modal", "is_open"),
+    prevent_initial_call=True,
+)
+def tutorial_nav(_o, _nx, _pv, _cl, step, is_open):
+    trig = ctx.triggered_id
+    steps = developer.TUTORIAL_STEPS
+    n = len(steps)
+    step = step or 0
+    if trig == "tut-open":
+        step = 0
+        is_open = True
+    elif trig == "tut-close":
+        return False, 0, no_update, no_update, no_update
+    elif trig == "tut-next":
+        if step >= n - 1:
+            return False, 0, no_update, no_update, no_update
+        step += 1
+    elif trig == "tut-prev":
+        step = max(0, step - 1)
+    s = steps[step]
+    return is_open, step, s["title"], s["body"], f"{step + 1} / {n}"
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 def main() -> None:
     parser = argparse.ArgumentParser(description="ta-automl GUI (v0.2.0)")
@@ -553,8 +684,13 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8050)
     parser.add_argument("--no-browser", action="store_true",
                         help="Don't auto-open the browser.")
+    parser.add_argument("--plugins", action="append", default=[],
+                        help="Plugin module / file / dir to import on launch. "
+                             "Can be repeated.")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
+    if args.plugins:
+        load_plugins(args.plugins)
 
     url = f"http://{args.host}:{args.port}"
     if not args.no_browser:
