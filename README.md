@@ -6,6 +6,12 @@ AutoML hyperparameter optimizer for TA-Lib technical analysis signals with backt
 > and a Plotly Dash interface opens at <http://127.0.0.1:8050>. Every option has a
 > **(?)** button that explains the concept with a plain-English analogy — no ML or
 > finance background required. See `ta_automl/gui/`.
+<details>
+  <summary>Click to view large screenshot</summary>
+  <img width="100%" alt="image" src="https://github.com/user-attachments/assets/818ff255-9f21-46e2-892d-9677a26185aa" />
+  <img width="100%" alt="image" src="https://github.com/user-attachments/assets/7ea93ca2-d7b4-4065-8531-b5194243b26a" />
+</details>
+
 
 ## How it works
 
