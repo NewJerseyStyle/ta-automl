@@ -27,7 +27,7 @@ def run_flaml_study(
     surviving_keys: list[str],
     eval_fn: Callable[[dict], dict],
     n_trials: int,
-    metric: str = "sharpe_ratio",
+    metric: str = "objective",
     time_budget_s: int | None = None,
     verbose: bool = True,
 ) -> tuple[dict[str, Any], dict[str, float]]:
@@ -50,8 +50,7 @@ def run_flaml_study(
 
     def objective(config):
         metrics = eval_fn(config)
-        val = float(metrics.get(metric, -999.0))
-        # FLAML tune.report expects the metric as a keyword arg
+        val = float(metrics.get(metric, metrics.get("sharpe_ratio", -999.0)))
         tune.report(**{metric: val})
         best_metrics_ref.update(metrics)
 

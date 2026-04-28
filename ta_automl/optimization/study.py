@@ -12,7 +12,7 @@ def run_vizier_study(
     eval_fn: Callable[[dict], dict],
     n_trials: int,
     study_name: str = "ta_automl",
-    metric: str = "sharpe_ratio",
+    metric: str = "objective",
     verbose: bool = True,
 ) -> tuple[dict[str, Any], dict[str, float]]:
     """
@@ -90,7 +90,7 @@ def run_vizier_study(
             for trial in suggestions:
                 raw_params = {p.name: p.value for p in trial.parameters}
                 metrics = eval_fn(raw_params)
-                val = float(metrics.get(metric, -999.0))
+                val = float(metrics.get(metric, metrics.get("sharpe_ratio", -999.0)))
 
                 try:
                     measurement = vz.Measurement()

@@ -20,8 +20,17 @@ warnings.filterwarnings("ignore", category=UserWarning)
 @click.option("--trials",      default=100,           show_default=True, help="Optimizer trial count")
 @click.option("--optimizer",   default="vizier",      show_default=True,
               type=click.Choice(["vizier", "flaml"]), help="Optimizer backend")
-@click.option("--metric",      default="sharpe",      show_default=True,
-              type=click.Choice(["sharpe", "return", "winrate"]), help="Objective metric")
+@click.option("--loss",        default="sharpe",      show_default=True,
+              help="Loss function name (see --list-losses) or 'module:fn'")
+@click.option("--list-losses", is_flag=True, default=False,
+              help="Print all registered loss functions and exit")
+@click.option("--search-strategy", default="weighted", show_default=True,
+              help="Search strategy: 'weighted' (default), 'shap', or 'module:fn'")
+@click.option("--list-searches", is_flag=True, default=False,
+              help="Print all registered search strategies and exit")
+@click.option("--metric",      default=None,
+              type=click.Choice(["sharpe", "return", "winrate"]),
+              help="[DEPRECATED] use --loss instead; kept for backwards compat")
 @click.option("--p-threshold", default=0.05,          show_default=True, help="Stage-1 p-value cutoff")
 @click.option("--min-sharpe",  default=0.10,          show_default=True, help="Stage-1 min |Sharpe|")
 @click.option("--no-bonferroni", is_flag=True, default=False, help="Disable Bonferroni correction")
@@ -35,7 +44,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 @click.option("--output-dir",  default="results",    show_default=True, help="Output directory")
 @click.option("--cache-dir",   default=".cache",     show_default=True, help="Data cache directory")
 def cli(
-    symbol, start, end, trials, optimizer, metric,
+    symbol, start, end, trials, optimizer, loss, list_losses,
+    search_strategy, list_searches, metric,
     p_threshold, min_sharpe, no_bonferroni,
     top_n, lookback, cash, commission, train_ratio,
     no_short, save_html, output_dir, cache_dir,
@@ -46,19 +56,44 @@ def cli(
     from ta_automl.config import ScreenConfig, StudyConfig
     from ta_automl.data.fetcher import fetch_ohlcv
     from ta_automl.display.traffic_light import render_traffic_light
-    from ta_automl.optimization.evaluator import evaluate_trial, build_vizier_param_space
-    from ta_automl.signals.auto_discover import compute_raw, default_params
-    from ta_automl.signals.binarizer import INT_TO_METHOD, binarize
+    from ta_automl.optimization.loss import LOSS_REGISTRY, get_loss, list_losses as _list_losses
+    from ta_automl.optimization.search import (
+        SEARCH_REGISTRY, SearchContext, get_search, list_searches as _list_searches,
+    )
     from ta_automl.signals.screener import screen_indicators
 
-    metric_key = {"sharpe": "sharpe_ratio", "return": "total_return", "winrate": "win_rate"}[metric]
+    if list_losses:
+        click.echo("Registered loss functions:")
+        for name in _list_losses():
+            doc = (LOSS_REGISTRY[name].__doc__ or "").strip().split("\n")[0]
+            click.echo(f"  {name:<22}  {doc}")
+        return
+
+    if list_searches:
+        click.echo("Registered search strategies:")
+        for name in _list_searches():
+            doc = (SEARCH_REGISTRY[name].__doc__ or "").strip().split("\n")[0]
+            click.echo(f"  {name:<22}  {doc}")
+        return
+
+    # Resolve loss: legacy --metric overrides if explicitly set; --loss otherwise
+    legacy_map = {"sharpe": "sharpe", "return": "return", "winrate": "winrate"}
+    loss_name = legacy_map[metric] if metric else loss
+    # Allow 'module:fn' syntax for user-supplied losses
+    loss_obj: object = loss_name
+    if ":" in loss_name:
+        import importlib
+        mod_name, fn_name = loss_name.rsplit(":", 1)
+        loss_obj = getattr(importlib.import_module(mod_name), fn_name)
+    else:
+        get_loss(loss_name)  # validate it's registered (raises KeyError if not)
 
     console = Console()
     console.rule(f"[bold cyan]ta-automl  ·  {symbol}  ·  {start} → {end}[/bold cyan]")
 
     config = StudyConfig(
         symbol=symbol, start=start, end=end,
-        trials=trials, metric=metric_key,
+        trials=trials, loss=loss_name if isinstance(loss_obj, str) else "sharpe",
         cash=cash, commission=commission,
         train_ratio=train_ratio,
         allow_short=not no_short,
@@ -96,73 +131,32 @@ def cli(
 
     console.print(f"  → {len(survivors)} indicators survived")
 
-    # ── 3. Stage 2: Vizier / FLAML optimization ────────────────────────────────
-    console.print(f"\n[bold]Step 3:[/bold] Stage-2 optimization ({optimizer}, {trials} trials) …")
+    # ── 3. Stage 2: Search strategy dispatch ───────────────────────────────────
+    console.print(
+        f"\n[bold]Step 3:[/bold] Stage-2 search "
+        f"(strategy={search_strategy}, optimizer={optimizer}, {trials} trials) …"
+    )
 
-    def eval_fn(params: dict) -> dict:
-        return evaluate_trial(params, df, df_test, survivors, config)
+    search_ctx = SearchContext(
+        df=df, df_test=df_test, survivors=survivors, config=config,
+        loss_fn=loss_obj, loss_extra={},
+    )
+    search_callable = get_search(search_strategy)
+    result = search_callable(search_ctx)
+    best_params  = result.best_params
+    best_metrics = result.best_metrics
+    signals_df   = result.signals_df
+    combined     = result.combined
 
-    if optimizer == "vizier":
-        from ta_automl.optimization.study import run_vizier_study
-        best_params, best_metrics = run_vizier_study(
-            survivors, eval_fn, trials,
-            study_name=f"{symbol}_{start}_{end}",
-            metric=metric_key,
-        )
-    else:
-        from ta_automl.optimization.flaml_search import run_flaml_study
-        best_params, best_metrics = run_flaml_study(
-            survivors, eval_fn, trials, metric=metric_key,
-        )
+    console.print(
+        f"\n  Loss [bold]{loss_name}[/bold] = "
+        f"[bold green]{best_metrics.get('objective', float('nan')):.4f}[/bold green]  "
+        f"(sharpe={best_metrics.get('sharpe_ratio', 0):.3f}  "
+        f"return={best_metrics.get('total_return', 0):.1f}%  "
+        f"max_dd={best_metrics.get('max_drawdown', 0):.1f}%)"
+    )
 
-    console.print(f"\n  Best {metric_key}: [bold green]{best_metrics.get(metric_key, 'N/A'):.4f}[/bold green]")
-
-    # ── 4. Reconstruct full signal history with best params ────────────────────
-    console.print("\n[bold]Step 4:[/bold] Reconstructing signals with optimal parameters …")
-
-    threshold = float(best_params.get("combination_threshold", 0.3))
-    signals_dict: dict[str, pd.Series] = {}
-    weighted_sum = pd.Series(0.0, index=df.index)
-    total_weight = 0.0
-
-    for key in survivors:
-        weight = float(best_params.get(f"{key}__weight", 0.0))
-        if weight < 0.05:
-            continue
-        base = key.split("__")[0]
-        from ta_automl.optimization.evaluator import _indicator_base
-        from ta_automl.signals.auto_discover import param_search_space
-        space = param_search_space(base)
-        ind_params = {}
-        for p_name, (lo, hi, ptype) in space.items():
-            full = f"{key}__{p_name}"
-            if full in best_params:
-                ind_params[p_name] = ptype(best_params[full])
-
-        try:
-            raw_dict = compute_raw(base, df, ind_params or None)
-        except Exception:
-            continue
-
-        raw_series = raw_dict.get(key)
-        if raw_series is None:
-            raw_series = next(iter(raw_dict.values()))
-        method_idx = int(best_params.get(f"{key}__binarize", 0))
-        method = INT_TO_METHOD.get(method_idx, "percentile")
-        sig = binarize(key, raw_series, df, method=method)
-
-        signals_dict[key] = sig
-        weighted_sum += weight * sig
-        total_weight += weight
-
-    if total_weight > 0:
-        weighted_sum /= total_weight
-
-    combined = pd.Series(0, index=df.index, dtype=int)
-    combined[weighted_sum >  threshold] = 1
-    combined[weighted_sum < -threshold] = -1
-
-    signals_df = pd.DataFrame(signals_dict, index=df.index)
+    # ── 4. (signals already reconstructed by the search strategy) ──────────────
 
     # ── 5. Display traffic light ───────────────────────────────────────────────
     console.print("\n[bold]Step 5:[/bold] Rendering traffic light …")
@@ -172,7 +166,7 @@ def cli(
         combined=combined,
         best_params=best_params,
         best_metrics=best_metrics,
-        surviving_keys=survivors,
+        surviving_keys=list(signals_df.columns),
         top_n=top_n,
         lookback=lookback,
         console=console,

@@ -29,6 +29,12 @@ dependencies = [
     "pyarrow>=12.0",
 ]
 
+[project.optional-dependencies]
+shap = [
+    "catboost>=1.2",
+    "shap>=0.44",
+]
+
 [project.scripts]
 ta-automl = "ta_automl.main:cli"
 

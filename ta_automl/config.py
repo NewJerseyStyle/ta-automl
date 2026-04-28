@@ -30,7 +30,8 @@ class StudyConfig:
     start: str = "2018-01-01"
     end: str = "2024-12-31"
     trials: int = 100
-    metric: str = "sharpe"           # sharpe | return | winrate
+    metric: str = "sharpe"           # legacy alias for `loss`
+    loss: str = "sharpe"             # name of registered loss fn (see optimization.loss)
     cash: float = 10_000.0
     commission: float = 0.002
     train_ratio: float = 0.70        # fraction of days for training (screener + no backtest)

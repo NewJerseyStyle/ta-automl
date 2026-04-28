@@ -38,9 +38,14 @@ def render_traffic_light(
     if console is None:
         console = Console()
 
-    # Pick top-N indicators by weight from best_params
+    # Pick top-N indicators by weight or SHAP importance from best_params
+    def _importance_of(k: str) -> float:
+        return float(
+            best_params.get(f"{k}__weight",
+            best_params.get(f"{k}__importance", 0.0))
+        )
     weights = {
-        key: float(best_params.get(f"{key}__weight", 0.0))
+        key: _importance_of(key)
         for key in surviving_keys
         if key in signals_df.columns
     }

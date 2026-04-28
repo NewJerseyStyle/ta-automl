@@ -9,6 +9,7 @@ import pandas as pd
 
 from ta_automl.backtest.strategy import run_backtest
 from ta_automl.config import StudyConfig
+from ta_automl.optimization.loss import LossContext, LossFn, get_loss
 from ta_automl.signals.auto_discover import compute_raw, param_search_space
 from ta_automl.signals.binarizer import INT_TO_METHOD, binarize
 
@@ -24,6 +25,8 @@ def evaluate_trial(
     df_test: pd.DataFrame,
     surviving_keys: list[str],
     config: StudyConfig,
+    loss_fn: str | LossFn | None = None,
+    loss_extra: dict[str, Any] | None = None,
 ) -> dict[str, float]:
     """
     Build weighted combination signal from trial params, run backtest on df_test.
@@ -69,8 +72,15 @@ def evaluate_trial(
         weighted_sum += weight * sig
         total_weight += weight
 
+    # Resolve loss function up front — used to populate the 'objective' key
+    fn = get_loss(loss_fn) if loss_fn is not None else get_loss(config.loss)
+    ctx = LossContext(params=params, min_trades=5, extra=loss_extra or {})
+
     if total_weight < 0.01:
-        return {"sharpe_ratio": -999.0, "total_return": -999.0, "win_rate": 0.0, "num_trades": 0}
+        bad = {"sharpe_ratio": -999.0, "total_return": -999.0, "win_rate": 0.0,
+               "num_trades": 0, "max_drawdown": -100.0}
+        bad["objective"] = float(fn(bad, ctx))
+        return bad
 
     # Normalize and apply threshold
     weighted_sum /= total_weight
@@ -90,13 +100,19 @@ def evaluate_trial(
             allow_short=config.allow_short,
         )
     except Exception:
-        return {"sharpe_ratio": -999.0, "total_return": -999.0, "win_rate": 0.0, "num_trades": 0}
+        bad = {"sharpe_ratio": -999.0, "total_return": -999.0, "win_rate": 0.0,
+               "num_trades": 0, "max_drawdown": -100.0}
+        bad["objective"] = float(fn(bad, ctx))
+        return bad
 
     # Penalise degenerate never-trade solutions
     if result["num_trades"] < min_trades:
         result["sharpe_ratio"] *= 0.1
+        result["total_return"] = result["total_return"] * 0.1 - 1.0  # penalty for dd-loss
 
-    return {k: v for k, v in result.items() if not k.startswith("_")}
+    metrics = {k: v for k, v in result.items() if not k.startswith("_")}
+    metrics["objective"] = float(fn(metrics, ctx))
+    return metrics
 
 
 def build_vizier_param_space(surviving_keys: list[str]) -> dict:
