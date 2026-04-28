@@ -17,10 +17,17 @@ revenue needle on average.
 
 ## Built-in strategies
 
-| Name | What it does | Needs |
-|------|-------------|-------|
-| `weighted` (default) | Vizier/FLAML over per-indicator weights + thresholds; revenue-driven | core deps |
-| `shap` | FLAML AutoML tunes CatBoost over indicator features; SHAP attributes feature importance | `pip install -e '.[shap]'` |
+| Name | What it does | `--optimizer` / `--trials` apply? | Needs |
+|------|-------------|-----------------------------------|-------|
+| `weighted` (default) | Vizier or FLAML BlendSearch over per-indicator weights + binarize methods + threshold. Revenue-driven; you can read winning indicator weights directly from the result. | **yes** — `weighted` is the only strategy that uses these flags | core deps |
+| `automl` | FLAML AutoML picks & tunes a tree classifier (lgbm/xgb/rf/...) over all indicator features. Reports the model's built-in `feature_importances_` for ranking. Black-box, no SHAP needed. | no — uses FLAML's internal time budget (`extra={"automl_time_budget_s": N}`) | core deps (FLAML AutoML extra) |
+| `shap` | Same training as `automl`, plus SHAP attribution on the held-out test set. Reveals which indicators drive specific predictions, including event-day signals that don't move average revenue. | no — same as `automl` | `pip install -e '.[shap]'` |
+
+**Why three?** `weighted` and `automl`/`shap` answer different questions:
+
+- **`weighted`** finds *the global mixture* that maximizes Sharpe on the test set. The Vizier-selected per-indicator weights ARE the interpretation — no SHAP needed. Best when you believe a fixed linear combination is the right model.
+- **`automl`** uses a non-linear tree model (interaction effects, conditional rules). Its `feature_importances_` is a coarse global ranking — useful but doesn't show *when* an indicator mattered.
+- **`shap`** is `automl` + per-sample, per-class attributions. Required when an indicator only matters on tail days / regime shifts — those signals appear in SHAP but get washed out of global importance and out of `weighted`'s linear weights.
 
 ```bash
 # Default revenue-search

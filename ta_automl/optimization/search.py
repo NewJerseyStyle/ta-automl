@@ -205,70 +205,61 @@ def search_weighted(ctx: SearchContext) -> SearchResult:
 
 
 # ── Built-in: "shap" — FLAML + CatBoost + SHAP attribution ────────────────────
-@register_search("shap")
-def search_shap(ctx: SearchContext) -> SearchResult:
-    """FLAML tunes CatBoost over all surviving indicator signals (used as features),
-    then SHAP attributions identify which indicators drive predictions.
-
-    Pipeline:
-      1. Build feature matrix X = signals_df, label y = sign(next_day_return).
-      2. Train/test split aligned to ctx.config.train_ratio.
-      3. FLAML AutoML tunes CatBoostClassifier (n_estimators, depth, lr, l2 ...).
-      4. Predict on test; convert P(up) - P(down) into ternary signal via threshold.
-      5. Backtest -> metrics; SHAP -> per-feature mean(|shap|) -> importance.
-
-    Captures indicators that matter for special events (drawdowns, reversals)
-    rather than just average revenue contribution.
-    """
+def _train_automl_classifier(ctx: SearchContext):
+    """Shared AutoML core: train a tree-classifier on indicator features,
+    return (model, X_full, y_full, X_test, signal_test, automl)."""
     try:
-        from catboost import CatBoostClassifier
-        import shap
-    except ImportError as e:
-        raise RuntimeError(
-            "search_shap requires catboost and shap. Install with: "
-            "uv pip install -e '.[shap]'"
-        ) from e
-
-    from flaml import AutoML
-    from ta_automl.backtest.strategy import run_backtest
-    from ta_automl.optimization.loss import LossContext, get_loss
+        from flaml.automl import AutoML
+    except ImportError:
+        try:
+            from flaml import AutoML
+        except ImportError as e:
+            raise RuntimeError(
+                "FLAML AutoML not importable. Run: uv pip install -U 'flaml[automl]'"
+            ) from e
 
     cfg = ctx.config
     df = ctx.df
 
-    # 1) Feature matrix from binarized indicator signals at default params
     X_full = build_signals_df(df, ctx.survivors)
     if X_full.shape[1] == 0:
         raise RuntimeError("No usable indicator features after binarization")
 
-    # 2) Forward-return label (no lookahead — labels are only used at training)
     next_ret = df["Close"].pct_change().shift(-1)
     y_full = pd.Series(0, index=df.index, dtype=int)
     y_full[next_ret > 0] = 1
     y_full[next_ret < 0] = -1
-    y_full = y_full.iloc[:-1]                      # last row has NaN return
+    y_full = y_full.iloc[:-1]
     X_full = X_full.iloc[:-1]
 
     split = int(len(X_full) * cfg.train_ratio)
     X_train, X_test = X_full.iloc[:split], X_full.iloc[split:]
-    y_train, y_test = y_full.iloc[:split], y_full.iloc[split:]
+    y_train = y_full.iloc[:split]
 
-    # 3) FLAML tunes CatBoost — multiclass {-1, 0, +1}
     automl = AutoML()
-    time_budget = int(ctx.extra.get("shap_time_budget_s", max(20, cfg.trials)))
-    automl.fit(
+    time_budget = int(ctx.extra.get("shap_time_budget_s",
+                       ctx.extra.get("automl_time_budget_s", max(20, cfg.trials))))
+    estimator_list = ctx.extra.get("shap_estimator_list",
+                       ctx.extra.get("automl_estimator_list", "auto"))
+    fit_kwargs: dict[str, Any] = dict(
         X_train=X_train.values, y_train=y_train.values,
         task="classification",
-        estimator_list=["catboost"],
         time_budget=time_budget,
         metric="accuracy",
         eval_method="cv", n_splits=3,
         seed=42, verbose=0,
     )
-    model = automl.model.estimator if hasattr(automl, "model") else automl.model
+    if estimator_list != "auto":
+        fit_kwargs["estimator_list"] = estimator_list
+    automl.fit(**fit_kwargs)
 
-    # 4) Predict on test, build ternary signal
-    proba = model.predict_proba(X_test.values)     # shape (n, n_classes)
+    model = getattr(automl, "model", None)
+    if model is not None and hasattr(model, "estimator"):
+        model = model.estimator
+    if model is None:
+        raise RuntimeError("FLAML did not produce a usable model")
+
+    proba = model.predict_proba(X_test.values)
     classes = list(getattr(model, "classes_", [-1, 0, 1]))
     def _idx(c):
         return classes.index(c) if c in classes else None
@@ -277,27 +268,105 @@ def search_shap(ctx: SearchContext) -> SearchResult:
     p_dn = proba[:, i_dn] if i_dn is not None else np.zeros(len(X_test))
     edge = p_up - p_dn
 
-    threshold = float(ctx.extra.get("shap_threshold", 0.10))
+    threshold = float(ctx.extra.get("shap_threshold",
+                      ctx.extra.get("automl_threshold", 0.10)))
     signal_test = pd.Series(0, index=X_test.index, dtype=int)
     signal_test[edge >  threshold] = 1
     signal_test[edge < -threshold] = -1
+    return model, automl, X_full, X_test, signal_test, threshold
 
-    # Align to ctx.df_test (may not be exactly equal due to NaN-row drop)
-    combined = pd.Series(0, index=df.index, dtype=int)
+
+def _backtest_automl_signal(
+    ctx: SearchContext, signal_test: pd.Series,
+) -> tuple[pd.Series, dict[str, float]]:
+    from ta_automl.backtest.strategy import run_backtest
+    from ta_automl.optimization.loss import LossContext, get_loss
+
+    cfg = ctx.config
+    combined = pd.Series(0, index=ctx.df.index, dtype=int)
     combined.loc[signal_test.index] = signal_test.values
-
-    # 5) Backtest on test slice
     df_test = ctx.df_test
     combined_test = combined.reindex(df_test.index).fillna(0).astype(int)
     bt = run_backtest(df_test, combined_test, cash=cfg.cash,
                       commission=cfg.commission, allow_short=cfg.allow_short)
     metrics = {k: v for k, v in bt.items() if not k.startswith("_")}
-
-    # Apply loss to populate "objective"
     loss_fn = get_loss(ctx.loss_fn) if ctx.loss_fn else get_loss(cfg.loss)
     metrics["objective"] = float(loss_fn(metrics, LossContext(extra=ctx.loss_extra)))
+    return combined, metrics
 
-    # SHAP attributions on test set
+
+@register_search("automl")
+def search_automl(ctx: SearchContext) -> SearchResult:
+    """FLAML AutoML over all surviving indicator signals — black-box, no SHAP.
+
+    Use this when you want the AutoML pipeline (FLAML picks lgbm/xgb/rf/...
+    and tunes hyperparams) but don't need per-feature interpretability.
+    The displayed "importance" comes from the model's built-in
+    feature_importances_ (or get_feature_importance()).
+
+    Pipeline:
+      1. Build feature matrix X = signals_df, label y = sign(next_day_return).
+      2. Train/test split aligned to ctx.config.train_ratio.
+      3. FLAML AutoML picks & tunes the best classifier within time budget.
+      4. Predict on test; convert P(up) - P(down) into ternary signal via threshold.
+      5. Backtest -> metrics; report model.feature_importances_ for ranking.
+    """
+    model, automl, X_full, X_test, signal_test, threshold = _train_automl_classifier(ctx)
+    combined, metrics = _backtest_automl_signal(ctx, signal_test)
+
+    # Built-in model importance (no SHAP)
+    importance_arr = None
+    for attr in ("feature_importances_", "get_feature_importance"):
+        if hasattr(model, attr):
+            fi = getattr(model, attr)
+            importance_arr = np.asarray(fi() if callable(fi) else fi)
+            break
+    if importance_arr is None or len(importance_arr) != X_full.shape[1]:
+        importance_arr = np.zeros(X_full.shape[1])
+
+    importance = {col: float(v) for col, v in zip(X_full.columns, importance_arr)}
+    best_params: dict[str, Any] = {f"{k}__importance": v for k, v in importance.items()}
+    best_params["combination_threshold"] = threshold
+    best_params["model_type"] = type(model).__name__
+    best_params["best_estimator"] = getattr(automl, "best_estimator", "unknown")
+
+    return SearchResult(
+        best_params=best_params,
+        best_metrics=metrics,
+        signals_df=X_full,
+        combined=combined,
+        importance=importance,
+        extra={"model": model, "threshold": threshold,
+               "best_estimator": getattr(automl, "best_estimator", "unknown")},
+    )
+
+
+@register_search("shap")
+def search_shap(ctx: SearchContext) -> SearchResult:
+    """Same AutoML training as 'automl', plus SHAP attribution for per-feature
+    importance — identifies indicators that matter for special events
+    (drawdowns, reversals) even when their average revenue contribution is small.
+
+    Use 'automl' instead if you don't need SHAP interpretability — it's the
+    same model search without the SHAP dependency.
+    """
+    try:
+        import shap
+    except ImportError as e:
+        raise RuntimeError(
+            "search_shap requires shap. Install with: "
+            "uv pip install -e '.[shap]'  (or: pip install shap)\n"
+            "If you don't need per-feature interpretability, use --search-strategy automl"
+        ) from e
+
+    model, automl, X_full, X_test, signal_test, threshold = _train_automl_classifier(ctx)
+    combined, metrics = _backtest_automl_signal(ctx, signal_test)
+    X_train = X_full.iloc[:int(len(X_full) * ctx.config.train_ratio)]
+
+    # SHAP attributions on test set — try TreeExplainer (works for
+    # lgbm/xgboost/rf/catboost), then fall back to model-agnostic Explainer,
+    # then to whatever feature_importances_ the model exposes.
+    importance_arr = None
     try:
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X_test.values)
@@ -308,20 +377,33 @@ def search_shap(ctx: SearchContext) -> SearchResult:
             arr = np.abs(shap_values)
             if arr.ndim == 3:    # (n_samples, n_features, n_classes)
                 arr = arr.mean(axis=2)
-        importance_arr = arr.mean(axis=0)            # mean over samples
+        importance_arr = arr.mean(axis=0)
     except Exception:
-        # Fallback: CatBoost's built-in importance
-        importance_arr = np.asarray(model.get_feature_importance())
+        try:
+            # Model-agnostic fallback (slower; uses the unified Explainer interface)
+            explainer = shap.Explainer(model.predict, X_train.values[:200])
+            sv = explainer(X_test.values).values
+            importance_arr = np.abs(sv).mean(axis=tuple(range(sv.ndim - 1)))
+        except Exception:
+            for attr in ("feature_importances_", "get_feature_importance"):
+                if hasattr(model, attr):
+                    fi = getattr(model, attr)
+                    importance_arr = np.asarray(fi() if callable(fi) else fi)
+                    break
+    if importance_arr is None or len(importance_arr) != X_full.shape[1]:
+        importance_arr = np.zeros(X_full.shape[1])
 
     importance = {col: float(v) for col, v in zip(X_full.columns, importance_arr)}
 
-    # Best-params dict here = SHAP importances + the few CatBoost hyperparams
+    # Best-params dict here = SHAP importances + which estimator FLAML picked
     best_params: dict[str, Any] = {f"{k}__importance": v for k, v in importance.items()}
     best_params["combination_threshold"] = threshold
-    best_params["model_type"] = "catboost"
+    best_params["model_type"] = type(model).__name__
+    best_params["best_estimator"] = getattr(automl, "best_estimator", "unknown")
     if hasattr(model, "get_params"):
-        best_params.update({f"cb_{k}": v for k, v in model.get_params().items()
-                            if isinstance(v, (int, float, str, bool))})
+        for k, v in model.get_params().items():
+            if isinstance(v, (int, float, str, bool)):
+                best_params[f"model_{k}"] = v
 
     return SearchResult(
         best_params=best_params,

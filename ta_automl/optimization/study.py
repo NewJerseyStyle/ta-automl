@@ -22,6 +22,13 @@ def run_vizier_study(
     Falls back to random search if Vizier's GP algorithm (requires JAX) is unavailable.
     """
     try:
+        import logging as _logging
+        _logging.getLogger("absl").setLevel(_logging.ERROR)
+        try:
+            from absl import logging as _absl_logging
+            _absl_logging.set_verbosity(_absl_logging.ERROR)
+        except Exception:
+            pass
         from vizier.service import clients
         from vizier.service import pyvizier as vz
         _vizier_ok = True

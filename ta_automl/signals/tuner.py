@@ -104,6 +104,13 @@ def tune_one_indicator(
 
     elif optimizer == "vizier":
         try:
+            import logging as _logging
+            _logging.getLogger("absl").setLevel(_logging.ERROR)
+            try:
+                from absl import logging as _absl_logging
+                _absl_logging.set_verbosity(_absl_logging.ERROR)
+            except Exception:
+                pass
             from vizier.service import clients, pyvizier as vz
 
             sc = vz.StudyConfig(algorithm="GAUSSIAN_PROCESS_BANDIT")

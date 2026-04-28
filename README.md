@@ -131,23 +131,28 @@ ta-automl --symbol AMD --loss min_drawdown --trials 100
 ta-automl --symbol AMD --loss calmar       --trials 100
 
 # Built-in search strategies
-ta-automl --symbol AMD --search-strategy weighted --trials 100   # default
-ta-automl --symbol AMD --search-strategy shap     --trials 60    # FLAML+CatBoost+SHAP
+ta-automl --symbol AMD --search-strategy weighted --trials 100   # default — Vizier over weights
+ta-automl --symbol AMD --search-strategy automl                  # FLAML AutoML black-box (no SHAP)
+ta-automl --symbol AMD --search-strategy shap                    # AutoML + SHAP attributions
+
+# Note: --optimizer / --trials only apply to 'weighted'. 'automl' and 'shap'
+# use FLAML's internal time budget. See docs/CUSTOM_SEARCH.md.
 
 # Mix and match — user-supplied loss/search via 'module:fn'
 ta-automl --symbol AMD --search-strategy my_search:my_fn --loss my_losses:my_loss
 
-# SHAP search needs the optional extras (catboost + shap):
+# SHAP search just needs SHAP — FLAML already ships LightGBM:
 uv pip install -e '.[shap]'
+
+# CatBoost is an *optional* extra candidate FLAML can pick:
+uv pip install -e '.[shap,catboost]'
 ```
 
-**When to use SHAP search**: the default `weighted` strategy is revenue-driven
-— it down-weights indicators that don't move average returns. The `shap`
-strategy trains a CatBoost classifier over **all** surviving indicator
-features and uses SHAP attributions to identify per-feature importance, so
-indicators that fire only on special events (volatility regimes, gap days,
-reversals) still surface even if their average revenue contribution is
-near zero.
+**When to use which strategy**:
+
+- **`weighted`** — fastest to interpret. Vizier's per-indicator weights ARE the answer; no SHAP needed. Best when a fixed linear blend is the right model. Respects `--optimizer` and `--trials`.
+- **`automl`** — black-box tree model that captures non-linear interactions. Returns global `feature_importances_` for the picked model. Use when you want AutoML quality but don't need per-sample interpretability.
+- **`shap`** — `automl` + SHAP attributions. Required when indicators only matter on tail days / regime shifts (those don't show up in linear weights or coarse global importance). Pulls in the `shap` extra.
 
 The Python API also accepts callables directly via
 `evaluate_trial(..., loss_fn=my_fn)` and `get_search(my_search_fn)(ctx)`.

@@ -1,4 +1,6 @@
 """Runtime compatibility patches — imported first by ta_automl/__init__.py."""
+import logging
+import os
 import warnings
 
 # numpy 2.x removed np.bool8; bokeh 2.x / backtesting.py 0.3.3 still uses it.
@@ -6,6 +8,22 @@ import warnings
 import numpy as np
 if not hasattr(np, "bool8"):
     np.bool8 = np.bool_
+
+# Vizier's in-process servicer emits an unconditional absl warning
+# ("Python 3.8+ is required in this case.") on every study creation —
+# the check is misleading (Python version is fine) and we run hundreds
+# of studies during --tune-screen. Silence it.
+os.environ.setdefault("ABSL_LOGGING_VERBOSITY", "0")
+try:
+    from absl import logging as absl_logging
+    absl_logging.set_verbosity(absl_logging.ERROR)
+    absl_logging.use_absl_handler()
+except Exception:
+    pass
+
+# Also clamp the standard-library logger that absl proxies through
+for _name in ("absl", "vizier", "vizier._src.service.vizier_client"):
+    logging.getLogger(_name).setLevel(logging.ERROR)
 
 import pandas as pd
 

@@ -157,10 +157,21 @@ def cli(
     console.print(f"  {len(survivors)} indicators survived")
 
     # ── 3. Stage 2: Search strategy dispatch ───────────────────────────────────
-    console.print(
-        f"\n[bold]Step 3:[/bold] Stage-2 search "
-        f"(strategy={search_strategy}, optimizer={optimizer}, {trials} trials) …"
-    )
+    # The 'weighted' strategy is the only one that respects --optimizer and --trials.
+    # Other strategies (shap, automl, custom) own their own search loop.
+    if search_strategy == "weighted":
+        console.print(
+            f"\n[bold]Step 3:[/bold] Stage-2 search "
+            f"(strategy=weighted, optimizer={optimizer}, {trials} trials) …"
+        )
+    else:
+        console.print(
+            f"\n[bold]Step 3:[/bold] Stage-2 search (strategy={search_strategy}) …"
+        )
+        console.print(
+            f"  [dim]note: --optimizer/--trials are ignored by '{search_strategy}'; "
+            f"that strategy runs its own internal search loop[/dim]"
+        )
 
     search_ctx = SearchContext(
         df=df, df_test=df_test, survivors=survivors, config=config,
