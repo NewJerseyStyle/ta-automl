@@ -22,6 +22,13 @@ class ScreenConfig:
     bonferroni: bool = False         # Bonferroni correction (only used when p_filter=True)
     min_sharpe: float = -2.0         # reject only catastrophically loss-making indicators
 
+    # ── Parameter-aware screening (Stage-1 hyperparameter tuning) ────────────
+    tune_params: bool = False        # if True, search per-indicator hyperparameters during screening
+    tune_optimizer: str = "vizier"   # 'vizier' | 'flaml' | 'random'
+    tune_trials: int = 8             # trials per indicator (small budget — 158 indicators × 8 = 1264 evals)
+    tune_metric: str = "abs_sharpe"  # what to maximize per indicator: abs_sharpe | sharpe | neg_p_value
+    tune_method_choice: bool = True  # also search over binarization methods
+
 
 @dataclass
 class StudyConfig:

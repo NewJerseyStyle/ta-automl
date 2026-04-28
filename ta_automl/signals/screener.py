@@ -45,13 +45,23 @@ def screen_indicators(
     df: pd.DataFrame,
     config: ScreenConfig,
     verbose: bool = True,
-) -> list[str]:
+    return_tuned: bool = False,
+):
     """
-    Loop over all TA-Lib indicators (via talib.get_functions()), compute with
-    default params, binarize, and keep those passing data-quality checks.
+    Loop over all TA-Lib indicators (via talib.get_functions()), compute, binarize,
+    and keep those passing data-quality (and optional significance) checks.
 
-    Optional p-value / Sharpe filtering is available via config.p_filter=True.
-    Returns a list of indicator keys (e.g. 'RSI', 'MACD__macd', 'BBANDS__upperband').
+    Two modes:
+      - default (config.tune_params=False): each indicator is evaluated with
+        TA-Lib default parameters.
+      - parameter-aware (config.tune_params=True): per-indicator hyperparameter
+        search (Vizier / FLAML / random) finds a better config + binarization
+        method before quality filtering.
+
+    Returns:
+      - return_tuned=False (default): list[str] of indicator keys
+      - return_tuned=True: tuple (list[str], dict) where dict maps
+        key -> {"params": ..., "binarize": ..., "score": ...}
     """
     try:
         all_names = get_all_indicator_names()
@@ -66,6 +76,7 @@ def screen_indicators(
         p_thresh = config.p_threshold / len(all_names)
 
     survivors: list[str] = []
+    tuned_map: dict[str, dict] = {}  # key -> {"params": ..., "binarize": ..., "score": ...}
 
     if verbose:
         try:
@@ -80,11 +91,47 @@ def screen_indicators(
 
     def _process_one(name: str) -> list[str]:
         keys_kept = []
-        try:
-            params = default_params(name)
-            raw_dict = compute_raw(name, df, params)
-        except Exception:
-            return keys_kept
+
+        # Parameter-aware path: find best (params, method) per output key first
+        if config.tune_params:
+            from ta_automl.signals.tuner import tune_one_indicator
+            try:
+                tuned = tune_one_indicator(
+                    name, df, next_ret,
+                    n_trials=config.tune_trials,
+                    optimizer=config.tune_optimizer,
+                    metric=config.tune_metric,
+                    tune_method=config.tune_method_choice,
+                )
+            except Exception:
+                tuned = {}
+        else:
+            tuned = {}
+
+        # Compute the raw outputs we'll evaluate. For tuned mode, use the
+        # winning config of each output key; for default mode, TA-Lib defaults.
+        if tuned:
+            raw_dict = {}
+            # Group keys by their winning config to compute_raw once per config
+            cfg_to_keys: dict[tuple, list[str]] = {}
+            for key, info in tuned.items():
+                p_tuple = tuple(sorted((info.get("params") or {}).items()))
+                cfg_to_keys.setdefault(p_tuple, []).append(key)
+            for p_tuple, keys in cfg_to_keys.items():
+                p = dict(p_tuple)
+                try:
+                    rd = compute_raw(name, df, p or None)
+                except Exception:
+                    continue
+                for key in keys:
+                    if key in rd:
+                        raw_dict[key] = rd[key]
+        else:
+            try:
+                params = default_params(name)
+                raw_dict = compute_raw(name, df, params)
+            except Exception:
+                return keys_kept
 
         for key, raw_series in raw_dict.items():
             # Quality check 1: too many NaNs
@@ -92,9 +139,10 @@ def screen_indicators(
             if nan_frac > config.max_nan_frac:
                 continue
 
-            # Quality check 2: binarize and ensure enough non-zero days
+            # Quality check 2: binarize (using tuned method if available)
+            method = tuned.get(key, {}).get("binarize") if tuned else None
             try:
-                sig = binarize(key, raw_series, df)
+                sig = binarize(key, raw_series, df, method=method)
             except Exception:
                 continue
 
@@ -115,6 +163,9 @@ def screen_indicators(
                     continue
 
             keys_kept.append(key)
+            if tuned and key in tuned:
+                tuned_map[key] = tuned[key]
+
         return keys_kept
 
     if _rich:
@@ -141,6 +192,16 @@ def screen_indicators(
             survivors.extend(_process_one(name))
 
     if verbose:
-        print(f"\nStage 1 complete: {len(survivors)} survivors from {len(all_names)} indicators")
+        mode = "tuned" if config.tune_params else "default-params"
+        print(f"\nStage 1 complete ({mode}): {len(survivors)} survivors "
+              f"from {len(all_names)} indicators")
+        if config.tune_params and tuned_map:
+            top = sorted(tuned_map.items(), key=lambda kv: kv[1]["score"], reverse=True)[:5]
+            print("  top tuned indicators:")
+            for k, v in top:
+                print(f"    {k:<28} score={v['score']:.3f}  "
+                      f"binarize={v['binarize']}  params={v['params']}")
 
+    if return_tuned:
+        return survivors, tuned_map
     return survivors

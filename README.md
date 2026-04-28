@@ -4,7 +4,7 @@ AutoML hyperparameter optimizer for TA-Lib technical analysis signals with backt
 
 ## How it works
 
-**Stage 1 — Screening:** Loops over all ~158 TA-Lib indicators via `talib.get_functions()`, computes each with default parameters, binarizes the output to `{-1, 0, +1}`, and keeps those with sufficient signal density (non-degenerate quality filter). Typically yields 100–130 indicator outputs as candidates.
+**Stage 1 — Screening:** Loops over all ~158 TA-Lib indicators via `talib.get_functions()`, computes each (default mode: TA-Lib defaults; with `--tune-screen`: a small per-indicator Vizier/FLAML/random search picks better params and binarization method), binarizes the output to `{-1, 0, +1}`, and keeps those with sufficient signal density. Typically yields 100–150 indicator outputs as candidates. The tuned configs are then handed to Stage 2 as warm-start anchors so Vizier doesn't re-discover them.
 
 **Stage 2 — Optimization:** Uses Google Vizier (GP-Bandit, in-process) or FLAML (BlendSearch) to search a high-dimensional parameter space: indicator-specific period/threshold hyperparameters + per-indicator combination weights + a global threshold. Each trial runs a full backtest on the held-out test set and returns the Sharpe ratio. Best combination is displayed as a traffic-light terminal table.
 
@@ -60,6 +60,12 @@ ta-automl --symbol AMD
 # Use FLAML if Vizier/JAX is not available
 ta-automl --symbol AMD --optimizer flaml
 
+# Parameter-aware Stage-1 screening (better quality survivors, slower)
+ta-automl --symbol AMD --tune-screen --tune-trials 8
+
+# Quick tuned screening with random search (fastest tuning option)
+ta-automl --symbol AMD --tune-screen --tune-optimizer random --tune-trials 4
+
 # Custom symbol and date range
 ta-automl --symbol NVDA --start 2020-01-01 --end 2024-12-31 --trials 50
 
@@ -95,6 +101,11 @@ ta-automl --help
 | `--p-threshold` | `0.20` | Stage-1 p-value cutoff (if `--p-filter` enabled) |
 | `--min-sharpe` | `-2.0` | Stage-1 minimum quick Sharpe |
 | `--no-bonferroni` | off | Disable Bonferroni correction |
+| `--tune-screen` | off | Stage-1 hyperparameter search per indicator (Vizier/FLAML/random) |
+| `--tune-trials` | `8` | Trials per indicator during Stage-1 tuning |
+| `--tune-optimizer` | `vizier` | Optimizer for Stage-1 tuning: `vizier`, `flaml`, `random` |
+| `--tune-metric` | `abs_sharpe` | Score: `abs_sharpe`, `sharpe`, `neg_p_value` |
+| `--tune-method` / `--no-tune-method` | on | Also search binarization methods |
 | `--output-dir` | `results` | Where to save JSON results |
 | `--cache-dir` | `.cache` | Local OHLCV parquet cache |
 
@@ -108,6 +119,7 @@ Two extension points, both registry-based and CLI-discoverable:
 |---------|-----|-------|
 | **Loss function** — what the optimizer maximizes | [docs/CUSTOM_LOSS.md](docs/CUSTOM_LOSS.md) | `--loss`, `--list-losses` |
 | **Search strategy** — how indicators are combined | [docs/CUSTOM_SEARCH.md](docs/CUSTOM_SEARCH.md) | `--search-strategy`, `--list-searches` |
+| **Parameter-aware Stage-1 screening** — find good per-indicator hyperparameters before screening | [docs/PARAMETER_AWARE_SCREENING.md](docs/PARAMETER_AWARE_SCREENING.md) | `--tune-screen`, `--tune-trials`, `--tune-optimizer` |
 
 ```bash
 # List what's registered

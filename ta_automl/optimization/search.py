@@ -36,6 +36,8 @@ class SearchContext:
     loss_fn: Any | None = None                # name or callable for loss
     loss_extra: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)  # arbitrary user state
+    tuned: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # tuned: key -> {"params": ..., "binarize": ..., "score": ...} from Stage-1 tuner
 
 
 @dataclass
@@ -126,6 +128,17 @@ def search_weighted(ctx: SearchContext) -> SearchResult:
     cfg = ctx.config
 
     def eval_fn(params: dict) -> dict:
+        # If Stage-1 tuning produced configs, fill in any missing per-indicator
+        # params/binarize from the tuned map (Vizier still searches the rest).
+        if ctx.tuned:
+            for key, info in ctx.tuned.items():
+                bin_key = f"{key}__binarize"
+                if bin_key not in params and "binarize" in info:
+                    from ta_automl.signals.binarizer import METHOD_TO_INT
+                    params[bin_key] = METHOD_TO_INT.get(info["binarize"], 0)
+                for p_name, p_val in (info.get("params") or {}).items():
+                    full = f"{key}__{p_name}"
+                    params.setdefault(full, p_val)
         return evaluate_trial(
             params, ctx.df, ctx.df_test, ctx.survivors, cfg,
             loss_fn=ctx.loss_fn, loss_extra=ctx.loss_extra,

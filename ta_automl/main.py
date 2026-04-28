@@ -34,6 +34,18 @@ warnings.filterwarnings("ignore", category=UserWarning)
 @click.option("--p-threshold", default=0.05,          show_default=True, help="Stage-1 p-value cutoff")
 @click.option("--min-sharpe",  default=0.10,          show_default=True, help="Stage-1 min |Sharpe|")
 @click.option("--no-bonferroni", is_flag=True, default=False, help="Disable Bonferroni correction")
+@click.option("--tune-screen", is_flag=True, default=False,
+              help="Stage-1 parameter-aware screening: search per-indicator hyperparameters before filtering")
+@click.option("--tune-trials", default=8, show_default=True,
+              help="Trials per indicator during Stage-1 tuning (only with --tune-screen)")
+@click.option("--tune-optimizer", default="vizier", show_default=True,
+              type=click.Choice(["vizier", "flaml", "random"]),
+              help="Optimizer used for per-indicator tuning (only with --tune-screen)")
+@click.option("--tune-metric", default="abs_sharpe", show_default=True,
+              type=click.Choice(["abs_sharpe", "sharpe", "neg_p_value"]),
+              help="Per-indicator screening score (only with --tune-screen)")
+@click.option("--tune-method/--no-tune-method", default=True,
+              help="Also search over binarization methods during Stage-1 tuning")
 @click.option("--top-n",       default=8,             show_default=True, help="Indicators in traffic light")
 @click.option("--lookback",    default=30,            show_default=True, help="Days shown in traffic light")
 @click.option("--cash",        default=10_000.0,      show_default=True, help="Starting cash")
@@ -47,6 +59,7 @@ def cli(
     symbol, start, end, trials, optimizer, loss, list_losses,
     search_strategy, list_searches, metric,
     p_threshold, min_sharpe, no_bonferroni,
+    tune_screen, tune_trials, tune_optimizer, tune_metric, tune_method,
     top_n, lookback, cash, commission, train_ratio,
     no_short, save_html, output_dir, cache_dir,
 ):
@@ -89,7 +102,7 @@ def cli(
         get_loss(loss_name)  # validate it's registered (raises KeyError if not)
 
     console = Console()
-    console.rule(f"[bold cyan]ta-automl  ·  {symbol}  ·  {start} → {end}[/bold cyan]")
+    console.rule(f"[bold cyan]ta-automl  |  {symbol}  |  {start} -> {end}[/bold cyan]")
 
     config = StudyConfig(
         symbol=symbol, start=start, end=end,
@@ -106,13 +119,18 @@ def cli(
             p_threshold=p_threshold,
             min_sharpe=min_sharpe,
             bonferroni=not no_bonferroni,
+            tune_params=tune_screen,
+            tune_trials=tune_trials,
+            tune_optimizer=tune_optimizer,
+            tune_metric=tune_metric,
+            tune_method_choice=tune_method,
         ),
     )
 
     # ── 1. Fetch data ──────────────────────────────────────────────────────────
     console.print("\n[bold]Step 1:[/bold] Fetching OHLCV data …")
     df = fetch_ohlcv(symbol, start, end, cache_dir=config.cache_dir)
-    console.print(f"  {len(df)} trading days  ({df.index[0].date()} → {df.index[-1].date()})")
+    console.print(f"  {len(df)} trading days  ({df.index[0].date()} -> {df.index[-1].date()})")
 
     # Train / test split
     split_idx = int(len(df) * train_ratio)
@@ -121,15 +139,22 @@ def cli(
     console.print(f"  train: {len(df_train)} days  |  test: {len(df_test)} days")
 
     # ── 2. Stage 1: screen indicators ─────────────────────────────────────────
-    console.print("\n[bold]Step 2:[/bold] Stage-1 indicator screening …")
-    survivors = screen_indicators(df, config.screen, verbose=True)
+    if tune_screen:
+        console.print(
+            f"\n[bold]Step 2:[/bold] Stage-1 parameter-aware screening "
+            f"(tuner={tune_optimizer}, {tune_trials} trials/indicator) …"
+        )
+    else:
+        console.print("\n[bold]Step 2:[/bold] Stage-1 indicator screening (default params) …")
+    result = screen_indicators(df, config.screen, verbose=True, return_tuned=True)
+    survivors, tuned_map = result if isinstance(result, tuple) else (result, {})
 
     if not survivors:
         console.print("[bold red]No indicators passed screening. "
                       "Try lowering --p-threshold or --min-sharpe.[/bold red]")
         raise SystemExit(1)
 
-    console.print(f"  → {len(survivors)} indicators survived")
+    console.print(f"  {len(survivors)} indicators survived")
 
     # ── 3. Stage 2: Search strategy dispatch ───────────────────────────────────
     console.print(
@@ -139,7 +164,7 @@ def cli(
 
     search_ctx = SearchContext(
         df=df, df_test=df_test, survivors=survivors, config=config,
-        loss_fn=loss_obj, loss_extra={},
+        loss_fn=loss_obj, loss_extra={}, tuned=tuned_map,
     )
     search_callable = get_search(search_strategy)
     result = search_callable(search_ctx)
