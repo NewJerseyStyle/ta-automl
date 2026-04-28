@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ta-automl"
+version = "0.1.0"
+description = "AutoML hyperparameter optimization for TA-Lib trading signals with backtesting"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    # Data
+    "yfinance>=0.2.50",
+    "pandas>=2.0",
+    "numpy>=1.24,<2.0",       # bokeh 2.4 uses np.bool8 removed in numpy 2.x
+    "scipy>=1.11",
+    # TA
+    "ta-lib>=0.4.0",
+    # Optimization
+    "google-vizier>=0.1.11",
+    "flaml[blendsearch]>=2.1",
+    # Backtesting
+    "backtesting==0.3.3",
+    "bokeh>=2.4,<3.0",
+    # Display / CLI
+    "rich>=13.0",
+    "click>=8.1",
+    "matplotlib>=3.7",
+    "diskcache>=5.6",
+    "pyarrow>=12.0",
+]
+
+[project.scripts]
+ta-automl = "ta_automl.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ta_automl"]
