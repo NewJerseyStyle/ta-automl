@@ -144,17 +144,20 @@ def search_weighted(ctx: SearchContext) -> SearchResult:
             loss_fn=ctx.loss_fn, loss_extra=ctx.loss_extra,
         )
 
+    aggregator = getattr(cfg, "aggregator", "weighted_sum")
     if cfg.optimizer == "vizier":
         from ta_automl.optimization.study import run_vizier_study
         best_params, best_metrics = run_vizier_study(
             ctx.survivors, eval_fn, cfg.trials,
             study_name=f"{cfg.symbol}_{cfg.start}_{cfg.end}",
             metric="objective",
+            aggregator=aggregator,
         )
     else:
         from ta_automl.optimization.flaml_search import run_flaml_study
         best_params, best_metrics = run_flaml_study(
             ctx.survivors, eval_fn, cfg.trials, metric="objective",
+            aggregator=aggregator,
         )
 
     # Rebuild signals + combined with the optimal params

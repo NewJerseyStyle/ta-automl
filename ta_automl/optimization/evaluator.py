@@ -35,9 +35,14 @@ def evaluate_trial(
     df_test  — held-out portion only (backtest runs here)
     """
     threshold = float(params.get("combination_threshold", 0.3))
+    aggregator = getattr(config, "aggregator", "weighted_sum")
+    buy_floor = float(params.get("buy_conviction", 0.20))
+    sell_floor = float(params.get("sell_conviction", 0.20))
     min_trades = 5
 
     weighted_sum = pd.Series(0.0, index=df.index)
+    pos_weight = pd.Series(0.0, index=df.index)   # Σ wᵢ where sᵢ = +1
+    neg_weight = pd.Series(0.0, index=df.index)   # Σ wᵢ where sᵢ = -1
     total_weight = 0.0
 
     for key in surviving_keys:
@@ -70,6 +75,8 @@ def evaluate_trial(
 
         sig = binarize(key, raw_series, df, method=method)
         weighted_sum += weight * sig
+        pos_weight += weight * (sig > 0).astype(float)
+        neg_weight += weight * (sig < 0).astype(float)
         total_weight += weight
 
     # Resolve loss function up front — used to populate the 'objective' key
@@ -84,9 +91,20 @@ def evaluate_trial(
 
     # Normalize and apply threshold
     weighted_sum /= total_weight
+    pos_frac = pos_weight / total_weight
+    neg_frac = neg_weight / total_weight
     combined = pd.Series(0, index=df.index, dtype=int)
-    combined[weighted_sum >  threshold] = 1
-    combined[weighted_sum < -threshold] = -1
+
+    if aggregator == "clamped_sum":
+        # Conviction-floor rule: BUY only when long-side weight share clears the
+        # buy_floor AND beats short-side share by `threshold`. Symmetric for SELL.
+        # Stepper surface than weighted_sum; encodes "BUY ⇒ real buy agreement".
+        net = pos_frac - neg_frac
+        combined[(pos_frac >= buy_floor) & (net > threshold)] = 1
+        combined[(neg_frac >= sell_floor) & (net < -threshold)] = -1
+    else:
+        combined[weighted_sum >  threshold] = 1
+        combined[weighted_sum < -threshold] = -1
 
     # Slice to test window (no lookahead: all indicator computation used full df)
     combined_test = combined.reindex(df_test.index).fillna(0).astype(int)
@@ -115,7 +133,7 @@ def evaluate_trial(
     return metrics
 
 
-def build_vizier_param_space(surviving_keys: list[str]) -> dict:
+def build_vizier_param_space(surviving_keys: list[str], aggregator: str = "weighted_sum") -> dict:
     """
     Return a description of the Vizier parameter space as a plain dict.
     Format: {param_name: ("float"|"int"|"categorical", lo, hi, [choices])}
@@ -124,6 +142,9 @@ def build_vizier_param_space(surviving_keys: list[str]) -> dict:
 
     space = {}
     space["combination_threshold"] = ("float", 0.05, 0.80, None)
+    if aggregator == "clamped_sum":
+        space["buy_conviction"] = ("float", 0.05, 0.70, None)
+        space["sell_conviction"] = ("float", 0.05, 0.70, None)
 
     processed_bases: set[str] = set()
     for key in surviving_keys:

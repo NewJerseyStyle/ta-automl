@@ -116,6 +116,47 @@ HELP: dict[str, dict[str, str]] = {
         ),
         "tip": "Vizier if installed, otherwise FLAML — quality is similar in practice.",
     },
+    "aggregator": {
+        "short": "How the weighted strategy turns per-indicator votes into one BUY/SELL decision.",
+        "long": (
+            "After the optimizer learns a weight for each indicator, those "
+            "weighted signals still need to be collapsed into a single trade "
+            "decision each day. Two rules are available:\n\n"
+            "• **Weighted sum** *(default)* — compute Σ wᵢ·sᵢ, then BUY when "
+            "this exceeds a learned threshold (and the mirror for SELL). "
+            "Smooth: small weight changes give small Sharpe changes, which is "
+            "what the GP-based optimizer (Vizier) likes. Best when you have "
+            "many indicators and you trust the optimizer to balance them.\n\n"
+            "• **Clamped sum** *(conviction floor)* — tally long-side weight "
+            "(only +1 votes) and short-side weight (only −1 votes) separately. "
+            "BUY only when the long-side share clears a learned floor AND beats "
+            "short-side share. SELL is symmetric. Encodes the rule: 'a BUY "
+            "conclusion must come from real buy-side agreement, not just the "
+            "absence of sell votes.' The optimizer also tunes the long/short "
+            "conviction floors. Surface is steppier (Sharpe can jump as a "
+            "threshold tips one indicator in/out), so it converges a little "
+            "slower — but is more robust when many indicators sit at 0 most "
+            "days and you want to avoid trading on near-zero net consensus."
+        ),
+        "analogy": (
+            "Imagine a panel of advisors voting BUY / HOLD / SELL.\n"
+            "  • **Weighted sum** averages their votes by trust level. If the "
+            "average leans positive, you BUY. Quiet advisors (HOLD) drag the "
+            "average toward zero — that's fine, sometimes you want a soft "
+            "consensus.\n"
+            "  • **Clamped sum** says: 'I'll only BUY if at least, say, 30% of "
+            "advisor weight is *actively saying BUY* — and they outvote the "
+            "actively-bearish ones.' Silent advisors don't help. You're "
+            "demanding real conviction before pulling the trigger."
+        ),
+        "tip": (
+            "Use weighted sum (default) for most setups. Switch to clamped sum "
+            "when (a) most indicators are 0 most days and you don't want a "
+            "thin majority of small-weight votes to fire trades, or (b) you "
+            "want a strategy whose decisions are easy to explain as "
+            "'enough indicators agreed to BUY *and* not many disagreed.'"
+        ),
+    },
     "trials": {
         "short": "How many parameter combinations to try. More = better result, slower.",
         "long": (

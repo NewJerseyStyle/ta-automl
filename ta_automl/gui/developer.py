@@ -86,7 +86,7 @@ def developer_panel() -> html.Div:
                                             dcc.Dropdown(
                                                 id="dev-combiner-pick",
                                                 options=[],
-                                                placeholder="Default: sum_of_signs",
+                                                placeholder="Default: clamped_sum",
                                             ),
                                         ],
                                         md=4,

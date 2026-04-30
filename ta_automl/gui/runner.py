@@ -101,6 +101,7 @@ def _execute(st: RunState, params: dict[str, Any]) -> None:
         train_ratio=float(params["train_ratio"]),
         allow_short=bool(params["allow_short"]),
         optimizer=params["optimizer"],
+        aggregator=params.get("aggregator", "weighted_sum"),
         top_n=int(params["top_n"]),
         lookback=int(params["lookback"]),
         save_html=False,

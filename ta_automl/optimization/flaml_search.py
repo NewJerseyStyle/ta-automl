@@ -30,6 +30,7 @@ def run_flaml_study(
     metric: str = "objective",
     time_budget_s: int | None = None,
     verbose: bool = True,
+    aggregator: str = "weighted_sum",
 ) -> tuple[dict[str, Any], dict[str, float]]:
     """
     Run FLAML BlendSearch to find best indicator params + combination weights.
@@ -43,7 +44,7 @@ def run_flaml_study(
             "FLAML not installed. Run: pip install 'flaml[blendsearch]'"
         )
 
-    param_space = build_vizier_param_space(surviving_keys)
+    param_space = build_vizier_param_space(surviving_keys, aggregator=aggregator)
     flaml_space = _to_flaml_space(param_space)
 
     best_metrics_ref: dict = {}

@@ -47,6 +47,8 @@ def validate_idea(
     end: str,
     indicators: list[str],
     combiner: str | None = None,
+    buy_threshold: int = 5,
+    sell_threshold: int = 5,
     indicator_params: dict[str, dict[str, Any]] | None = None,
     combiner_params: dict[str, Any] | None = None,
     cash: float = 10_000.0,
@@ -96,13 +98,17 @@ def validate_idea(
     signals_df = pd.DataFrame(sig_cols, index=df.index).fillna(0).astype(int)
 
     # ── Combine ──────────────────────────────────────────────────────────
-    combiner_name = combiner or "sum_of_signs"
+    combiner_name = combiner or "clamped_sum"
     if combiner_name not in COMBINER_REGISTRY:
         raise KeyError(
             f"Unknown combiner {combiner_name!r}. "
             f"Registered: {sorted(COMBINER_REGISTRY)}"
         )
-    combined = apply_combiner(combiner_name, signals_df, df, combiner_params)
+    params = dict(combiner_params or {})
+    if combiner_name == "clamped_sum":
+        params.setdefault("buy_threshold", buy_threshold)
+        params.setdefault("sell_threshold", sell_threshold)
+    combined = apply_combiner(combiner_name, signals_df, df, params)
 
     # ── Backtest on test slice ───────────────────────────────────────────
     from ta_automl.backtest.strategy import run_backtest
@@ -183,9 +189,36 @@ from ta_automl.sdk.combiners import register_combiner as _reg_combiner
 
 @_reg_combiner("sum_of_signs", expose_to_search=False)
 def _sum_of_signs(signals: pd.DataFrame, df: pd.DataFrame) -> pd.Series:
-    """Default combiner: BUY when more indicators say buy than sell.
-
-    The signed sum across all signal columns, then sign() of the result.
-    Equivalent to a simple majority vote.
-    """
+    """Legacy default: sign of the signed sum (simple majority vote)."""
     return np.sign(signals.sum(axis=1)).astype(int)
+
+
+@_reg_combiner("clamped_sum", expose_to_search=False)
+def _clamped_sum(
+    signals: pd.DataFrame,
+    df: pd.DataFrame,
+    buy_threshold: int = 1,
+    sell_threshold: int = 1,
+) -> pd.Series:
+    """Default combiner: separately tally BUY and SELL conviction.
+
+    Counts long-side and short-side votes independently:
+        buys  = clip(signals, 0,  1).sum(axis=1)   # only +1's
+        sells = clip(signals, -1, 0).sum(axis=1)   # only -1's (negative)
+        net   = buys + sells
+
+    Emits +1 when buys >= buy_threshold and net > 0 (BUY conviction wins),
+    -1 when |sells| >= sell_threshold and net < 0 (SELL conviction wins),
+    0 otherwise. The asymmetry matters: a BUY conclusion should precede a
+    rising period, a SELL conclusion a falling one — so we want net agreement
+    with a minimum vote count, not just sign().
+    """
+    s = signals.astype(float)
+    buys = s.clip(lower=0, upper=1).sum(axis=1)
+    sells = s.clip(lower=-1, upper=0).sum(axis=1)
+    net = buys + sells
+
+    out = pd.Series(0, index=signals.index, dtype=int)
+    out[(buys >= buy_threshold) & (net > 0)] = 1
+    out[(-sells >= sell_threshold) & (net < 0)] = -1
+    return out

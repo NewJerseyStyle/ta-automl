@@ -44,6 +44,10 @@ class StudyConfig:
     train_ratio: float = 0.70        # fraction of days for training (screener + no backtest)
     allow_short: bool = True
     optimizer: str = "vizier"        # vizier | flaml
+    aggregator: str = "weighted_sum" # how the weighted strategy turns per-indicator
+                                     # signals into a final BUY/SELL: 'weighted_sum'
+                                     # (smooth, default) or 'clamped_sum' (conviction
+                                     # floor: separate long/short tally + min-vote gate)
     top_n: int = 8                   # how many indicators to show in traffic light
     lookback: int = 30               # how many recent days in traffic light table
     save_html: bool = False          # save backtesting.py interactive HTML chart

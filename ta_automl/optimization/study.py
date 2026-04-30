@@ -14,6 +14,7 @@ def run_vizier_study(
     study_name: str = "ta_automl",
     metric: str = "objective",
     verbose: bool = True,
+    aggregator: str = "weighted_sum",
 ) -> tuple[dict[str, Any], dict[str, float]]:
     """
     Run a Vizier in-process GP-Bandit study.
@@ -38,7 +39,10 @@ def run_vizier_study(
 
     if not _vizier_ok:
         from ta_automl.optimization.flaml_search import run_flaml_study
-        return run_flaml_study(surviving_keys, eval_fn, n_trials, metric=metric, verbose=verbose)
+        return run_flaml_study(
+            surviving_keys, eval_fn, n_trials,
+            metric=metric, verbose=verbose, aggregator=aggregator,
+        )
 
     # In-process mode — no server required
     try:
@@ -52,7 +56,7 @@ def run_vizier_study(
         vz.MetricInformation(metric, goal=vz.ObjectiveMetricGoal.MAXIMIZE)
     )
 
-    param_space = build_vizier_param_space(surviving_keys)
+    param_space = build_vizier_param_space(surviving_keys, aggregator=aggregator)
     root = sc.search_space.root
 
     for p_name, (kind, lo, hi, _) in param_space.items():

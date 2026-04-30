@@ -128,6 +128,18 @@ controls_panel = html.Div(
                                  "value": "vizier"},
                             ],
                         )),
+                labeled("Aggregator (weighted strategy)", "aggregator",
+                        dbc.Select(
+                            id="in-aggregator",
+                            value="weighted_sum",
+                            options=[
+                                {"label": "Weighted sum (smooth, default)",
+                                 "value": "weighted_sum"},
+                                {"label": "Clamped sum (conviction floor; "
+                                          "BUY needs real buy-side agreement)",
+                                 "value": "clamped_sum"},
+                            ],
+                        )),
                 labeled("Number of trials", "trials",
                         dcc.Slider(id="in-trials", min=10, max=300, step=10, value=50,
                                    marks={10: "10", 50: "50", 100: "100",
@@ -279,6 +291,7 @@ def show_help(_clicks, is_open):
     State("in-train", "value"),
     State("in-search", "value"),
     State("in-optimizer", "value"),
+    State("in-aggregator", "value"),
     State("in-trials", "value"),
     State("in-loss", "value"),
     State("in-cash", "value"),
@@ -290,8 +303,9 @@ def show_help(_clicks, is_open):
     State("in-lookback", "value"),
     prevent_initial_call=True,
 )
-def kick_off(n, symbol, start, end, train_ratio, search, optimizer, trials, loss,
-             cash, commission, allow_short, tune, tune_trials, top_n, lookback):
+def kick_off(n, symbol, start, end, train_ratio, search, optimizer, aggregator,
+             trials, loss, cash, commission, allow_short, tune, tune_trials,
+             top_n, lookback):
     if not symbol or not start or not end:
         return no_update, no_update, False, dbc.Alert(
             "Please fill in symbol and date range.", color="warning")
@@ -299,6 +313,7 @@ def kick_off(n, symbol, start, end, train_ratio, search, optimizer, trials, loss
     params = dict(
         symbol=symbol, start=str(start)[:10], end=str(end)[:10],
         train_ratio=train_ratio, search_strategy=search, optimizer=optimizer,
+        aggregator=aggregator,
         trials=trials, loss=loss, cash=cash, commission=commission,
         allow_short=allow_short, tune_screen=tune, tune_trials=tune_trials,
         tune_optimizer="random", top_n=top_n, lookback=lookback,

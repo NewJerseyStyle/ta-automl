@@ -20,6 +20,13 @@ warnings.filterwarnings("ignore", category=UserWarning)
 @click.option("--trials",      default=100,           show_default=True, help="Optimizer trial count")
 @click.option("--optimizer",   default="vizier",      show_default=True,
               type=click.Choice(["vizier", "flaml"]), help="Optimizer backend")
+@click.option("--aggregator",  default="weighted_sum", show_default=True,
+              type=click.Choice(["weighted_sum", "clamped_sum"]),
+              help="How the 'weighted' search turns per-indicator signals into a "
+                   "BUY/SELL: 'weighted_sum' (smooth Σ wᵢ·sᵢ then threshold — best "
+                   "with many noisy indicators) or 'clamped_sum' (separate long/"
+                   "short tally with a conviction floor — use when you want BUY to "
+                   "require real buy-side agreement, not just absence of sell votes).")
 @click.option("--loss",        default="sharpe",      show_default=True,
               help="Loss function name (see --list-losses) or 'module:fn'")
 @click.option("--list-losses", is_flag=True, default=False,
@@ -60,7 +67,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
                    "so user-registered indicators / combiners / losses / searches "
                    "are visible. Can be repeated.")
 def cli(
-    symbol, start, end, trials, optimizer, loss, list_losses,
+    symbol, start, end, trials, optimizer, aggregator, loss, list_losses,
     search_strategy, list_searches, metric,
     p_threshold, min_sharpe, no_bonferroni,
     tune_screen, tune_trials, tune_optimizer, tune_metric, tune_method,
@@ -118,6 +125,7 @@ def cli(
         train_ratio=train_ratio,
         allow_short=not no_short,
         optimizer=optimizer,
+        aggregator=aggregator,
         top_n=top_n, lookback=lookback,
         save_html=save_html,
         output_dir=Path(output_dir),
